@@ -43,7 +43,7 @@ def process_video(video_path, source_id):
 
     # Initialize variables
     prev_frame_hash = b'\x00' * 32  # Start with zero hash for the first frame
-    special_pixels_offset = 10000  # 10,000 pixel offset
+    special_pixels_offset = 0  # 10,000 pixel offset
     special_pixel_count = 1024  # 1024 special pixels
 
     # Predefine the positions of the 4 security pixel blocks within the 1024 special pixels
