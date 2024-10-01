@@ -2,8 +2,16 @@ import cv2
 import numpy as np
 from tqdm import tqdm
 
-def calculate_checksum(frame):
-    return np.sum(frame) % 256
+def calculate_checksum(frame, special_pixels):
+    # Calculate checksum excluding the special pixels
+    mask = np.ones(frame.shape[:2], dtype=bool)  # Create a mask for the frame
+    for pixel in special_pixels:
+        row_index = pixel // frame.shape[1]
+        col_index = pixel % frame.shape[1]
+        mask[row_index, col_index] = False  # Exclude special pixels from the mask
+    
+    # Calculate checksum based on the masked frame
+    return np.sum(frame[mask]) % 256
 
 def extract_checksum(frame, special_pixel):
     row_index = special_pixel // frame.shape[1]
@@ -17,8 +25,8 @@ def decode_video(input_path):
     fps = cap.get(cv2.CAP_PROP_FPS)
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    # Calculate 256 evenly spread out pixel positions
-    special_pixels = np.linspace(1000, width * height - 1, 256, dtype=int)
+    # Fixed special pixels evenly distributed across the frame
+    special_pixels = np.linspace(0, width * height - 1, 256, dtype=int)
 
     tampered_frames = []
 
@@ -27,10 +35,8 @@ def decode_video(input_path):
         if not ret:
             break
 
-        # Randomly select a special pixel to extract checksum
-        special_pixel = np.random.choice(special_pixels)
-        embedded_checksum = extract_checksum(frame, special_pixel)
-        calculated_checksum = calculate_checksum(frame)
+        embedded_checksum = extract_checksum(frame, special_pixels[i % len(special_pixels)])
+        calculated_checksum = calculate_checksum(frame, special_pixels)
 
         # Check for mismatch
         if embedded_checksum != calculated_checksum:
