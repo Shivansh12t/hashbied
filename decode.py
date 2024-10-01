@@ -1,111 +1,101 @@
 import cv2
-import hashlib
 import numpy as np
+import hashlib
 from tqdm import tqdm
 
-# Helper function to calculate checksum of a frame, excluding the special pixels
-def calculate_checksum(frame, special_pixels):
-    # Convert linear pixel indices to 2D (row, col) indices for accessing pixel values
-    row_indices = special_pixels // frame.shape[1]
-    col_indices = special_pixels % frame.shape[1]
-    
-    # Get the sum of all pixel values excluding the special pixels
-    total_sum = np.sum(frame) - np.sum(frame[row_indices, col_indices, :])
-    return total_sum % 256  # Return checksum (modulo 256 for simplicity)
-
-# Helper function to calculate hash of the frame
+# Function to calculate hash of a frame
 def calculate_frame_hash(frame):
     frame_data = frame.tobytes()  # Convert the frame to bytes
     return hashlib.sha256(frame_data).digest()[:32]  # Return 256-bit (32 bytes) hash
 
-# Function to extract embedded information from 1024 specific pixels
-# Function to extract embedded information from 1024 specific pixels
+# Function to extract information embedded in 1024 specific pixels
 def extract_info_from_pixels(frame, special_pixels):
-    # Convert linear pixel indices to 2D (row, col) indices for accessing pixel values
     row_indices = special_pixels // frame.shape[1]
     col_indices = special_pixels % frame.shape[1]
-    
-    # Extract the source ID, previous frame hash, validity, and checksum from the special pixels
-    # Extracting only one channel (for example, blue channel, which is index 0)
-    source_id = [frame[row_indices[i], col_indices[i], 0] for i in range(256)]
-    prev_frame_hash = [frame[row_indices[i + 256], col_indices[i + 256], 0] for i in range(256)]
-    validity = [frame[row_indices[i + 512], col_indices[i + 512], 0] for i in range(32)]
-    checksum = [frame[row_indices[i + 768], col_indices[i + 768], 0] for i in range(32)]
-    
-    return bytes(source_id), bytes(prev_frame_hash), bytes(validity), bytes(checksum)
 
+    source_id = frame[row_indices[:256], col_indices[:256]].flatten()
+    prev_frame_hash = frame[row_indices[256:512], col_indices[256:512]].flatten()
+    validity = frame[row_indices[512:768], col_indices[512:768]].flatten()
+    checksum = frame[row_indices[768:], col_indices[768:]].flatten()
 
-# Main function to decode video and check for tampering
+    return bytes(source_id), bytes(prev_frame_hash), int(validity[0]), int(checksum[0])
+
+# Helper function to calculate checksum of a frame, excluding special pixels
+def calculate_checksum(frame, special_pixels):
+    row_indices = special_pixels // frame.shape[1]
+    col_indices = special_pixels % frame.shape[1]
+    total_sum = np.sum(frame) - np.sum(frame[row_indices, col_indices, :])
+    return total_sum % 256  # Return checksum (modulo 256 for simplicity)
+
+# Function to dynamically determine the special pixels (security pixels)
+def get_special_pixels(frame_height, frame_width, offset=10000):
+    total_pixels = frame_height * frame_width
+    special_pixel_count = 1024
+    # Ensure the offset doesn't exceed the number of pixels in the frame
+    offset = min(offset, total_pixels - special_pixel_count)
+    return np.linspace(offset, total_pixels - 1, special_pixel_count, dtype=int)
+
+# Main function to decode and validate video
 def decode_video(video_path, original_source_id):
-    # Open video
+    # Open the video
     cap = cv2.VideoCapture(video_path)
 
-    # Check if the video is 1080p
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    if width != 1920 or height != 1080:
-        print("Error: Video is not 1080p.")
+    # Retrieve FPS and frame count
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if fps == 0:
+        print("Error: Unable to retrieve FPS from the video. Please check the video file.")
         return
 
-    # Get video details
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    # Initialize variables
+    # Initialize necessary variables
     prev_frame_hash = b'\x00' * 32  # Zero hash for the first frame
     tampered_frames = []
 
-    def get_special_pixels(frame_height, frame_width, offset=10000):
-        total_pixels = frame_height * frame_width
-        offset = min(offset, total_pixels - 1024)
-        pixel_indices = np.linspace(offset, total_pixels - 1, 1024, dtype=int)
-        return pixel_indices
-
-    # Process video frame by frame
-    for i in tqdm(range(frame_count), desc="Validating Video"):
+    # Process the video frame by frame
+    for frame_number in tqdm(range(frame_count), desc="Validating Video"):
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Determine special pixels
-        special_pixels = get_special_pixels(height, width, offset=10000)
+        # Dynamically determine special pixels (adjust offset if it exceeds frame bounds)
+        special_pixels = get_special_pixels(frame.shape[0], frame.shape[1], offset=10000)
 
-        # Extract the embedded information from the current frame
+        # Extract embedded information
         source_id, embedded_prev_hash, validity, checksum = extract_info_from_pixels(frame, special_pixels)
 
-        # Verify the source ID
+        # Compare the extracted source_id and previous frame hash to detect tampering
         if source_id != original_source_id:
-            tampered_frames.append((i, "Source ID mismatch"))
+            tampered_frames.append((frame_number, "Source ID mismatch"))
+        if embedded_prev_hash != prev_frame_hash:
+            tampered_frames.append((frame_number, "Previous frame hash mismatch"))
 
-        # Calculate validity checksum and compare with the embedded validity
+        # Calculate validity checksum (excluding special pixels)
         calculated_validity = calculate_checksum(frame, special_pixels)
-        if calculated_validity != int.from_bytes(validity, byteorder='big') % 256:
-            tampered_frames.append((i, "Validity checksum mismatch"))
+        if calculated_validity != validity:
+            tampered_frames.append((frame_number, "Validity checksum mismatch"))
 
-        # Verify the previous frame's hash
-        if prev_frame_hash != embedded_prev_hash:
-            tampered_frames.append((i, "Previous frame hash mismatch"))
-
-        # Calculate the frame checksum and compare with the embedded checksum
+        # Calculate checksum for the pixels excluding the first 787 and special pixels
         frame_excluding_special_and_first_787 = frame.reshape(-1)[:(1920 * 1080) - 787]
         calculated_checksum = np.sum(frame_excluding_special_and_first_787) % 256
-        if calculated_checksum != int.from_bytes(checksum, byteorder='big') % 256:
-            tampered_frames.append((i, "Frame checksum mismatch"))
+        if calculated_checksum != checksum:
+            tampered_frames.append((frame_number, "Checksum mismatch"))
 
-        # Calculate the current frame hash for the next iteration
+        # Update the previous frame hash
         prev_frame_hash = calculate_frame_hash(frame)
 
-    # Release the video object
-    cap.release()
-
-    # Output the verdict
+    # Output the tampered frames and reasons
     if tampered_frames:
         print("Video has been tampered with. Tampered frames and reasons:")
-        for frame, reason in tampered_frames:
-            timestamp = frame / cap.get(cv2.CAP_PROP_FPS)
-            print(f"Frame {frame}, Timestamp {timestamp:.2f}s: {reason}")
+        for frame_number, reason in tampered_frames:
+            timestamp = frame_number / fps
+            print(f"Frame {frame_number} at {timestamp:.2f} seconds: {reason}")
     else:
-        print("The video is authentic and untampered.")
+        print("Video is authentic and untampered.")
+
+    # Release the video capture object
+    cap.release()
 
 # Example usage
-original_source_id = hashlib.sha256(b"Source Identifier").digest()  # Original source ID used in encoding
+original_source_id = hashlib.sha256(b"Source Identifier").digest()  # Example original source ID
 decode_video('secure_input_video.mp4', original_source_id)
