@@ -13,10 +13,10 @@ def extract_info_from_pixels(frame, special_pixels):
     row_indices = special_pixels // frame.shape[1]
     col_indices = special_pixels % frame.shape[1]
 
-    source_id = frame[row_indices[:256], col_indices[:256], 0][:32]  # Take only first 32 values
-    prev_frame_hash = frame[row_indices[256:512], col_indices[256:512], 0][:32]  # Take only first 32 values
-    validity = frame[row_indices[512:768], col_indices[512:768], 0][0]  # Take only first value
-    checksum = frame[row_indices[768:1024], col_indices[768:1024], 0][0]  # Take only first value
+    source_id = frame[row_indices[:256], col_indices[:256], 0][:32]
+    prev_frame_hash = frame[row_indices[256:512], col_indices[256:512], 0][:32]
+    validity = frame[row_indices[512:768], col_indices[512:768], 0][0]
+    checksum = frame[row_indices[768:1024], col_indices[768:1024], 0][0]
 
     return source_id, prev_frame_hash, validity, checksum
 
@@ -41,6 +41,15 @@ def decode_video(video_path, original_source_id):
 
         source_id, embedded_prev_hash, validity, checksum = extract_info_from_pixels(frame, special_pixels)
         calculated_checksum = calculate_checksum(frame, special_pixels)
+
+        # Log information for the last frame
+        if i == frame_count - 1:
+            print(f"Last frame ({i}):")
+            print(f"Extracted Source ID: {source_id}")
+            print(f"Embedded Previous frame hash: {embedded_prev_hash}")
+            print(f"Extracted Validity: {validity}")
+            print(f"Extracted Checksum: {checksum}")
+            print(f"Calculated Checksum: {calculated_checksum}")
 
         if not np.array_equal(original_source_id, source_id):
             tampered_frames.append((i, "Source ID mismatch"))

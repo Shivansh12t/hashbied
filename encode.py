@@ -17,7 +17,6 @@ def embed_info_in_pixels(frame, special_pixels, source_id, prev_frame_hash, vali
     row_indices = special_pixels // frame.shape[1]
     col_indices = special_pixels % frame.shape[1]
     
-    # Repeat the data to fill all 256 pixels for each piece of information
     frame[row_indices[:256], col_indices[:256], 0] = np.tile(source_id, 8)[:256]
     frame[row_indices[256:512], col_indices[256:512], 0] = np.tile(prev_frame_hash, 8)[:256]
     frame[row_indices[512:768], col_indices[512:768], 0] = np.tile(validity, 256)[:256]
@@ -35,7 +34,7 @@ def process_video(video_path, source_id):
     prev_frame_hash = np.zeros(32, dtype=np.uint8)
     special_pixels = np.linspace(10000, width * height - 1, 1024, dtype=int)
 
-    for _ in tqdm(range(frame_count), desc="Processing Video"):
+    for frame_num in tqdm(range(frame_count), desc="Processing Video"):
         ret, frame = cap.read()
         if not ret:
             break
@@ -44,6 +43,14 @@ def process_video(video_path, source_id):
         checksum = validity.copy()
 
         embed_info_in_pixels(frame, special_pixels, source_id, prev_frame_hash, validity, checksum)
+
+        # Log information for the last frame
+        if frame_num == frame_count - 1:
+            print(f"Last frame ({frame_num}):")
+            print(f"Source ID: {source_id}")
+            print(f"Previous frame hash: {prev_frame_hash}")
+            print(f"Validity: {validity}")
+            print(f"Checksum: {checksum}")
 
         prev_frame_hash = calculate_frame_hash(frame)
         out.write(frame)
